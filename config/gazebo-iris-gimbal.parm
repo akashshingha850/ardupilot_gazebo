@@ -14,11 +14,8 @@ MNT1_ROLL_MAX    30
 MNT1_ROLL_MIN    -30
 MNT1_YAW_MAX     160
 MNT1_YAW_MIN     -160
-MNT1_DEFLT_MODE  1           # Apply neutral mount target at boot
-MNT1_NEUTRAL_X   45          # Sweep test: max upward target
-MNT1_RETRACT_X   45          # Sweep test: max upward target
-MNT1_NEUTRAL_Y   30          # Cancel startup roll bias
-MNT1_RETRACT_Y   30          # Keep retract roll level
+
+MNT1_DEFLT_MODE  2           
 
 # Gimbal RC in
 RC6_MAX          1900
