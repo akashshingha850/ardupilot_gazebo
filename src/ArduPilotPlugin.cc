@@ -141,6 +141,9 @@ class Control
   /// The upper limit of PWM input should match SERVOX_MAX for this channel.
   public: double servo_max = 2000.0;
 
+  /// Flag set to true when servos are ready to output (pwm != 0).
+  public: bool outputReady = false;
+
   /// \brief Publisher for sending commands
   public: gz::transport::Node::Publisher pub;
 
@@ -240,6 +243,9 @@ class gz::sim::systems::ArduPilotPluginPrivate
 
   /// \brief Set true to enforce lock-step simulation
   public: bool isLockStep{false};
+
+  /// \brief Set true to prevent SITL from trying to sync with wall-time
+  public: bool isNoTimeSync{true};
 
   /// \brief Set true if have 32 servo channels
   public: bool have32Channels{false};
@@ -507,7 +513,11 @@ void gz::sim::systems::ArduPilotPlugin::Configure(
   this->dataPtr->isLockStep =
     sdfClone->Get("lock_step", this->dataPtr->isLockStep).first;
 
-  this->dataPtr->have32Channels =
+  // Prevent SITL attempting time-sync (has default: true)
+  this->dataPtr->isNoTimeSync =
+    sdfClone->Get("no_time_sync", this->dataPtr->isNoTimeSync).first;
+
+    this->dataPtr->have32Channels =
     sdfClone->Get("have_32_channels", false).first;
 
   // Add the signal handler
@@ -1297,6 +1307,12 @@ void gz::sim::systems::ArduPilotPlugin::ApplyMotorForces(
   // update velocity PID for controls and apply force to joint
   for (size_t i = 0; i < this->dataPtr->controls.size(); ++i)
   {
+    // skip servo output while not ready
+    if (!this->dataPtr->controls[i].outputReady)
+    {
+      continue;
+    }
+
     // Publish commands to be relayed to other plugins
     if (this->dataPtr->controls[i].type == "COMMAND")
     {
@@ -1639,23 +1655,42 @@ void gz::sim::systems::ArduPilotPlugin::UpdateMotorCommands(
                 const double multiplier = this->dataPtr->controls[i].multiplier;
                 const double offset = this->dataPtr->controls[i].offset;
 
-                // bound incoming cmd between 0 and 1
-                double raw_cmd = (pwm - pwm_min)/(pwm_max - pwm_min);
-                raw_cmd = gz::math::clamp(raw_cmd, 0.0, 1.0);
-                this->dataPtr->controls[i].cmd =
-                    multiplier * (raw_cmd + offset);
-
+                // pwm = 0 => no servo output.
+                if (_pwm[this->dataPtr->controls[i].channel] == 0)
+                {
+                  this->dataPtr->controls[i].outputReady = false;
+                  this->dataPtr->controls[i].cmd = 0.0;
 #if 0
-                gzdbg << "apply input chan["
-                    << this->dataPtr->controls[i].channel
-                    << "] to control chan[" << i
-                    << "] with joint name ["
-                    << this->dataPtr->controls[i].jointName
-                    << "] pwm [" << pwm
-                    << "] raw cmd [" << raw_cmd
-                    << "] adjusted cmd [" << this->dataPtr->controls[i].cmd
-                    << "].\n";
+                  gzdbg << "apply input chan["
+                      << this->dataPtr->controls[i].channel
+                      << "] to control chan[" << i
+                      << "] with joint name ["
+                      << this->dataPtr->controls[i].jointName
+                      << "] vehicle not ready.\n";
 #endif
+                }
+                else
+                {
+                  this->dataPtr->controls[i].outputReady = true;
+
+                  // bound incoming cmd between 0 and 1
+                  double raw_cmd = (pwm - pwm_min)/(pwm_max - pwm_min);
+                  raw_cmd = gz::math::clamp(raw_cmd, 0.0, 1.0);
+                  this->dataPtr->controls[i].cmd =
+                      multiplier * (raw_cmd + offset);
+#if 0
+                  gzdbg << "apply input chan["
+                      << this->dataPtr->controls[i].channel
+                      << "] to control chan[" << i
+                      << "] with joint name ["
+                      << this->dataPtr->controls[i].jointName
+                      << "] ready [" << this->dataPtr->controls[i].outputReady
+                      << "] pwm [" << pwm
+                      << "] raw cmd [" << raw_cmd
+                      << "] adjusted cmd [" << this->dataPtr->controls[i].cmd
+                      << "].\n";
+#endif
+                }
             }
             else
             {
@@ -1971,6 +2006,14 @@ void gz::sim::systems::ArduPilotPlugin::CreateStateJSON(
       writer.Double(windSpdBdyA);
       writer.EndObject();
     }
+
+    // Set no time sync
+    writer.Key("no_time_sync");
+    writer.Bool(this->dataPtr->isNoTimeSync);
+
+    // Set no lockstep
+    writer.Key("no_lockstep");
+    writer.Bool(!this->dataPtr->isLockStep);
 
     writer.EndObject();
 
